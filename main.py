@@ -44,7 +44,7 @@ Do not use slang or shouting. Keep it natural, chill, and neutral.
 """
     try:
         res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={"contents": [{"parts": [{"text": prompt}]}]}
         )
@@ -125,11 +125,14 @@ async def main():
             continue
 
         image_paths = []
-        # Check if message is part of media group (multiple images)
-        if msg.media_group_id:
+        if hasattr(msg, "media_group_id") and msg.media_group_id:
             media_group = []
-            async for grouped in client.iter_messages("WatcherGuru", min_id=msg.id - 5, max_id=msg.id + 5):
-                if grouped.media_group_id == msg.media_group_id and isinstance(grouped.media, MessageMediaPhoto):
+            async for grouped in client.iter_messages("WatcherGuru", min_id=msg.id - 10, max_id=msg.id + 10):
+                if (
+                    hasattr(grouped, "media_group_id") and
+                    grouped.media_group_id == msg.media_group_id and
+                    isinstance(grouped.media, MessageMediaPhoto)
+                ):
                     media_group.append(grouped)
             for media_msg in reversed(media_group):
                 try:
@@ -160,7 +163,6 @@ async def main():
                 "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
 
-        # Cleanup
         for path in image_paths:
             if os.path.exists(path):
                 os.remove(path)
