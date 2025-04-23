@@ -2,6 +2,7 @@ import os
 import json
 import time
 import asyncio
+import re
 import requests
 from datetime import datetime
 from telethon import TelegramClient
@@ -35,15 +36,15 @@ def log_result(entry):
 def translate_to_malay(text):
     prompt = f"""
 Translate the following post into Malay.
-Write it as a casual, friendly FB caption in one paragraph — no heading, no explanation, just the final result.
+Do not include any usernames, mentions, or Telegram handles (e.g., @WatcherGuru).
+Write it as a casual, friendly FB caption in one paragraph — no heading, no explanation.
 Do not use slang or shouting. Keep it natural, chill, and neutral.
-No need to say “Terjemahan:” or any extra labels.
 
 '{text}'
 """
     try:
         res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={"contents": [{"parts": [{"text": prompt}]}]}
         )
@@ -59,37 +60,48 @@ def get_fb_token():
     except:
         return None
 
-def post_to_fb(caption, image_path=None):
+def post_multiple_photos_to_fb(image_paths, caption):
     token = get_fb_token()
     if not token:
-        print("[FB] Failed to get access token.")
+        print("[FB] Missing page token.")
         return False
 
-    try:
-        if image_path:
+    media_ids = []
+    for image_path in image_paths:
+        try:
             with open(image_path, 'rb') as f:
                 files = {'source': f}
                 data = {
-                    "message": caption,
+                    "published": "false",
                     "access_token": token
                 }
-                response = requests.post(
+                r = requests.post(
                     f"https://graph.facebook.com/{FB_PAGE_ID}/photos",
                     data=data,
                     files=files
                 )
-        else:
-            data = {
-                "message": caption,
-                "access_token": token
-            }
-            response = requests.post(
-                f"https://graph.facebook.com/{FB_PAGE_ID}/feed",
-                data=data
-            )
-        return response.status_code == 200
+                if r.status_code == 200:
+                    media_id = r.json()["id"]
+                    media_ids.append({"media_fbid": media_id})
+                else:
+                    print(f"[FB Upload Error] {r.text}")
+        except Exception as e:
+            print(f"[FB Upload Exception] {e}")
+
+    if not media_ids:
+        print("[FB] No media uploaded.")
+        return False
+
+    try:
+        post_data = {
+            "message": caption,
+            "access_token": token,
+            "attached_media": json.dumps(media_ids)
+        }
+        r = requests.post(f"https://graph.facebook.com/{FB_PAGE_ID}/feed", data=post_data)
+        return r.status_code == 200
     except Exception as e:
-        print(f"[FB Error] {e}")
+        print(f"[FB Final Post Error] {e}")
         return False
 
 async def main():
@@ -107,30 +119,51 @@ async def main():
 
     for msg in reversed(messages):
         print(f"[Processing] Message ID: {msg.id}")
-        translated = translate_to_malay(msg.text or "")
+        cleaned_text = re.sub(r'@\w+', '', (msg.text or "")).strip()
+        translated = translate_to_malay(cleaned_text)
         if translated == "Translation failed":
             continue
 
-        image_path = None
-        if isinstance(msg.media, MessageMediaPhoto):
+        image_paths = []
+        # Check if message is part of media group (multiple images)
+        if msg.media_group_id:
+            media_group = []
+            async for grouped in client.iter_messages("WatcherGuru", min_id=msg.id - 5, max_id=msg.id + 5):
+                if grouped.media_group_id == msg.media_group_id and isinstance(grouped.media, MessageMediaPhoto):
+                    media_group.append(grouped)
+            for media_msg in reversed(media_group):
+                try:
+                    path = f"temp_{media_msg.id}.jpg"
+                    await client.download_media(media_msg.media, file=path)
+                    image_paths.append(path)
+                except Exception as e:
+                    print(f"[Download Error] {e}")
+        elif isinstance(msg.media, MessageMediaPhoto):
             try:
-                image_path = f"temp_{msg.id}.jpg"
-                await client.download_media(msg.media, file=image_path)
+                path = f"temp_{msg.id}.jpg"
+                await client.download_media(msg.media, file=path)
+                image_paths.append(path)
             except Exception as e:
-                print(f"[Image Download Error] {e}")
-                image_path = None
+                print(f"[Download Error] {e}")
 
-        success = post_to_fb(translated, image_path)
-        log_result({
-            "telegram_id": msg.id,
-            "original_text": msg.text or "",
-            "translated_caption": translated,
-            "fb_status": "Posted" if success else "Failed",
-            "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
+        if image_paths:
+            success = post_multiple_photos_to_fb(image_paths, translated)
+        else:
+            success = post_multiple_photos_to_fb([], translated)
 
-        if image_path and os.path.exists(image_path):
-            os.remove(image_path)
+        if success:
+            log_result({
+                "telegram_id": msg.id,
+                "original_text": msg.text or "",
+                "translated_caption": translated,
+                "fb_status": "Posted",
+                "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+        # Cleanup
+        for path in image_paths:
+            if os.path.exists(path):
+                os.remove(path)
 
         time.sleep(1)
 
