@@ -60,6 +60,27 @@ def get_fb_token():
     except:
         return None
 
+def post_text_only_to_fb(caption):
+    token = get_fb_token()
+    if not token:
+        return False
+    try:
+        response = requests.post(
+            f"https://graph.facebook.com/{FB_PAGE_ID}/feed",
+            data={
+                "message": caption,
+                "access_token": token
+            }
+        )
+        if response.status_code == 200:
+            print("[FB] Text-only post success.")
+        else:
+            print(f"[FB Text Post Error] {response.status_code}: {response.text}")
+        return response.status_code == 200
+    except Exception as e:
+        print(f"[FB Text Post Exception] {e}")
+        return False
+
 def post_multiple_photos_to_fb(image_paths, caption):
     token = get_fb_token()
     if not token:
@@ -68,6 +89,9 @@ def post_multiple_photos_to_fb(image_paths, caption):
 
     media_ids = []
     for image_path in image_paths:
+        if not os.path.exists(image_path):
+            print(f"[Skip Upload] File not found: {image_path}")
+            continue
         try:
             with open(image_path, 'rb') as f:
                 files = {'source': f}
@@ -83,13 +107,13 @@ def post_multiple_photos_to_fb(image_paths, caption):
                 if r.status_code == 200:
                     media_id = r.json()["id"]
                     media_ids.append({"media_fbid": media_id})
+                    print(f"[FB Uploaded] {image_path} → media_id={media_id}")
                 else:
-                    print(f"[FB Upload Error] {r.text}")
+                    print(f"[FB Upload Failed] {r.status_code}: {r.text}")
         except Exception as e:
             print(f"[FB Upload Exception] {e}")
 
     if not media_ids:
-        print("[FB] No media uploaded.")
         return False
 
     try:
@@ -99,9 +123,13 @@ def post_multiple_photos_to_fb(image_paths, caption):
             "attached_media": json.dumps(media_ids)
         }
         r = requests.post(f"https://graph.facebook.com/{FB_PAGE_ID}/feed", data=post_data)
+        if r.status_code == 200:
+            print("[FB] Multi-image post success.")
+        else:
+            print(f"[FB Post Error] {r.status_code}: {r.text}")
         return r.status_code == 200
     except Exception as e:
-        print(f"[FB Final Post Error] {e}")
+        print(f"[FB Final Post Exception] {e}")
         return False
 
 async def main():
@@ -120,6 +148,10 @@ async def main():
     for msg in reversed(messages):
         print(f"[Processing] Message ID: {msg.id}")
         cleaned_text = re.sub(r'@\w+', '', (msg.text or "")).strip()
+        if not cleaned_text:
+            print(f"[SKIP] Empty message after cleaning: {msg.id}")
+            continue
+
         translated = translate_to_malay(cleaned_text)
         if translated == "Translation failed":
             continue
@@ -139,6 +171,7 @@ async def main():
                     path = f"temp_{media_msg.id}.jpg"
                     await client.download_media(media_msg.media, file=path)
                     image_paths.append(path)
+                    print(f"[Downloaded] {path}")
                 except Exception as e:
                     print(f"[Download Error] {e}")
         elif isinstance(msg.media, MessageMediaPhoto):
@@ -146,13 +179,14 @@ async def main():
                 path = f"temp_{msg.id}.jpg"
                 await client.download_media(msg.media, file=path)
                 image_paths.append(path)
+                print(f"[Downloaded] {path}")
             except Exception as e:
                 print(f"[Download Error] {e}")
 
         if image_paths:
             success = post_multiple_photos_to_fb(image_paths, translated)
         else:
-            success = post_multiple_photos_to_fb([], translated)
+            success = post_text_only_to_fb(translated)
 
         if success:
             log_result({
