@@ -212,9 +212,9 @@ async def main():
 
         time.sleep(1)
 
-    await client.disconnect()
     save_posted_ids(posted_ids)
     log_result(results)
+    await client.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(main())
