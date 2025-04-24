@@ -38,7 +38,8 @@ def translate_to_malay(text):
 Translate the following post into Malay.
 Do not include any usernames, mentions, or Telegram handles (e.g., @WatcherGuru).
 Write it as a casual, friendly FB caption in one paragraph — no heading, no explanation.
-Do not use slang or shouting. Keep it natural, chill, and neutral.
+Do not use slang or shouting. Keep it natural, chill, and neutral. 
+Also if you notice the word [JUST IN:] translate that particular word into [TERKINI:]
 
 '{text}'
 """
