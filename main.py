@@ -16,6 +16,20 @@ LONG_LIVED_USER_TOKEN = os.getenv("LONG_LIVED_USER_TOKEN")
 
 SESSION_FILE = "telegram_session"
 
+# Load persistent posted message ID cache
+def load_posted_ids():
+    try:
+        with open("posted_id_cache.json", "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except:
+        return set()
+
+# Save updated posted message IDs
+def save_posted_ids(posted_ids):
+    with open("posted_id_cache.json", "w", encoding="utf-8") as f:
+        json.dump(list(posted_ids)[-100:], f, indent=2)
+
+# Overwrite results.json with only the current run’s data
 def log_result(entries):
     with open("results.json", "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=2)
@@ -127,10 +141,15 @@ async def main():
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.start()
 
+    posted_ids = load_posted_ids()
     media_group_ids_done = set()
     results = []
 
-    async for msg in client.iter_messages("WatcherGuru", limit=15):
+    async for msg in client.iter_messages("WatcherGuru", limit=20):
+        if msg.id in posted_ids:
+            print(f"[SKIP] Already posted ID: {msg.id}")
+            continue
+
         if hasattr(msg, "media_group_id") and msg.media_group_id in media_group_ids_done:
             continue
 
@@ -171,7 +190,6 @@ async def main():
             video_path = f"temp_{msg.id}.mp4"
             await client.download_media(msg.media, file=video_path)
 
-        # Post to Facebook
         if video_path:
             success = post_video_to_fb(video_path, translated)
         elif image_paths:
@@ -180,6 +198,7 @@ async def main():
             success = post_text_only_to_fb(translated)
 
         if success:
+            posted_ids.add(msg.id)
             results.append({
                 "telegram_id": msg.id,
                 "translated_caption": translated,
@@ -194,6 +213,7 @@ async def main():
         time.sleep(1)
 
     await client.disconnect()
+    save_posted_ids(posted_ids)
     log_result(results)
 
 if __name__ == "__main__":
