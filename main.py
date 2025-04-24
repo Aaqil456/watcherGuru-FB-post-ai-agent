@@ -37,9 +37,9 @@ def translate_to_malay(text):
     prompt = f"""
 Translate the following post into Malay.
 Do not include any usernames, mentions, or Telegram handles (e.g., @WatcherGuru).
+If the original post starts with 'JUST IN:' or '**JUST IN:**', please translate it as 'TERKINI:'.
 Write it as a casual, friendly FB caption in one paragraph — no heading, no explanation.
-Do not use slang or shouting. Keep it natural, chill, and neutral. 
-Also if you notice the word [JUST IN:] translate that particular word into [TERKINI:]
+Do not use slang or shouting. Keep it natural, chill, and neutral.
 
 '{text}'
 """
@@ -73,10 +73,7 @@ def post_text_only_to_fb(caption):
                 "access_token": token
             }
         )
-        if response.status_code == 200:
-            print("[FB] Text-only post success.")
-        else:
-            print(f"[FB Text Post Error] {response.status_code}: {response.text}")
+        print("[FB] Text-only post success." if response.status_code == 200 else f"[FB Text Error] {response.status_code}: {response.text}")
         return response.status_code == 200
     except Exception as e:
         print(f"[FB Text Post Exception] {e}")
@@ -124,10 +121,7 @@ def post_multiple_photos_to_fb(image_paths, caption):
             "attached_media": json.dumps(media_ids)
         }
         r = requests.post(f"https://graph.facebook.com/{FB_PAGE_ID}/feed", data=post_data)
-        if r.status_code == 200:
-            print("[FB] Multi-image post success.")
-        else:
-            print(f"[FB Post Error] {r.status_code}: {r.text}")
+        print("[FB] Multi-image post success." if r.status_code == 200 else f"[FB Post Error] {r.status_code}: {r.text}")
         return r.status_code == 200
     except Exception as e:
         print(f"[FB Final Post Exception] {e}")
@@ -138,19 +132,19 @@ async def main():
     await client.start()
 
     posted_ids = get_posted_ids()
-    messages = []
-    async for message in client.iter_messages("WatcherGuru", limit=10):
-        if message.id in posted_ids:
-            continue
-        if not message.text and not isinstance(message.media, MessageMediaPhoto):
-            continue
-        messages.append(message)
+    media_group_ids_done = set()
 
-    for msg in reversed(messages):
-        print(f"[Processing] Message ID: {msg.id}")
-        cleaned_text = re.sub(r'@\w+', '', (msg.text or "")).strip()
-        if not cleaned_text:
-            print(f"[SKIP] Empty message after cleaning: {msg.id}")
+    async for msg in client.iter_messages("WatcherGuru", limit=15):
+        if msg.id in posted_ids:
+            continue
+
+        # Skip if it's already posted via media_group
+        if hasattr(msg, "media_group_id") and msg.media_group_id in media_group_ids_done:
+            continue
+
+        cleaned_text = re.sub(r'@\w+', '', (msg.text or ""), flags=re.IGNORECASE).strip()
+        if not cleaned_text or len(cleaned_text.split()) < 3:
+            print(f"[SKIP] Empty or too short: {msg.id}")
             continue
 
         translated = translate_to_malay(cleaned_text)
@@ -158,15 +152,19 @@ async def main():
             continue
 
         image_paths = []
+
         if hasattr(msg, "media_group_id") and msg.media_group_id:
             media_group = []
-            async for grouped in client.iter_messages("WatcherGuru", min_id=msg.id - 10, max_id=msg.id + 10):
+            async for grouped in client.iter_messages("WatcherGuru", min_id=msg.id - 15, max_id=msg.id + 15):
                 if (
                     hasattr(grouped, "media_group_id") and
                     grouped.media_group_id == msg.media_group_id and
                     isinstance(grouped.media, MessageMediaPhoto)
                 ):
                     media_group.append(grouped)
+
+            media_group_ids_done.add(msg.media_group_id)
+
             for media_msg in reversed(media_group):
                 try:
                     path = f"temp_{media_msg.id}.jpg"
