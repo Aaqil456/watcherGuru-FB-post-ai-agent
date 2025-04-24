@@ -8,6 +8,7 @@ from datetime import datetime
 from telethon import TelegramClient
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 
+# === ENV ===
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -15,25 +16,31 @@ FB_PAGE_ID = os.getenv("FB_PAGE_ID")
 LONG_LIVED_USER_TOKEN = os.getenv("LONG_LIVED_USER_TOKEN")
 
 SESSION_FILE = "telegram_session"
+RESULT_FILE = "results.json"
 
-# Load persistent posted message ID cache
-def load_posted_ids():
+# === Load all previously posted texts from results.json ===
+def load_posted_texts_from_results():
     try:
-        with open("posted_id_cache.json", "r", encoding="utf-8") as f:
-            return set(json.load(f))
+        with open(RESULT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return set(entry["original_text"].strip() for entry in data if entry.get("original_text"))
     except:
         return set()
 
-# Save updated posted message IDs
-def save_posted_ids(posted_ids):
-    with open("posted_id_cache.json", "w", encoding="utf-8") as f:
-        json.dump(list(posted_ids)[-100:], f, indent=2)
+# === Append new entries to results.json (no overwrite) ===
+def log_result(new_entries):
+    try:
+        with open(RESULT_FILE, "r", encoding="utf-8") as f:
+            existing_entries = json.load(f)
+    except:
+        existing_entries = []
 
-# Overwrite results.json with only the current run’s data
-def log_result(entries):
-    with open("results.json", "w", encoding="utf-8") as f:
-        json.dump(entries, f, ensure_ascii=False, indent=2)
+    combined = existing_entries + new_entries
 
+    with open(RESULT_FILE, "w", encoding="utf-8") as f:
+        json.dump(combined, f, ensure_ascii=False, indent=2)
+
+# === Translate ===
 def translate_to_malay(text):
     cleaned = re.sub(r'@\w+', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'https?://\S+', '', cleaned)
@@ -60,6 +67,7 @@ Do not use slang or shouting. Keep it natural, chill, and neutral.
         print(f"[Gemini Error] {e}")
         return "Translation failed"
 
+# === Facebook Posting ===
 def get_fb_token():
     try:
         res = requests.get(f"https://graph.facebook.com/v19.0/me/accounts?access_token={LONG_LIVED_USER_TOKEN}")
@@ -137,29 +145,29 @@ def post_video_to_fb(video_path, caption):
         print(f"[FB Video Exception] {e}")
         return False
 
+# === MAIN ===
 async def main():
     client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
     await client.start()
 
-    posted_ids = load_posted_ids()
+    posted_texts = load_posted_texts_from_results()
     media_group_ids_done = set()
     results = []
 
     async for msg in client.iter_messages("WatcherGuru", limit=20):
-        if msg.id in posted_ids:
-            print(f"[SKIP] Already posted ID: {msg.id}")
+        original_text = (msg.text or "").strip()
+
+        if not original_text or len(original_text.split()) < 3:
+            continue
+
+        if original_text in posted_texts:
+            print(f"[SKIP] Already posted content: {original_text[:60]}...")
             continue
 
         if hasattr(msg, "media_group_id") and msg.media_group_id in media_group_ids_done:
             continue
 
-        cleaned_text = re.sub(r'@\w+', '', (msg.text or ""), flags=re.IGNORECASE).strip()
-        cleaned_text = re.sub(r'https?://\S+', '', cleaned_text)
-        cleaned_text = re.sub(r'\[.*?\]\(.*?\)', '', cleaned_text)
-        if not cleaned_text or len(cleaned_text.split()) < 3:
-            continue
-
-        translated = translate_to_malay(cleaned_text)
+        translated = translate_to_malay(original_text)
         if translated == "Translation failed":
             continue
 
@@ -198,9 +206,9 @@ async def main():
             success = post_text_only_to_fb(translated)
 
         if success:
-            posted_ids.add(msg.id)
             results.append({
                 "telegram_id": msg.id,
+                "original_text": original_text,
                 "translated_caption": translated,
                 "fb_status": "Posted",
                 "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -212,7 +220,6 @@ async def main():
 
         time.sleep(1)
 
-    save_posted_ids(posted_ids)
     log_result(results)
     await client.disconnect()
 
