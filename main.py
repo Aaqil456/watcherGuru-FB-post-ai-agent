@@ -81,7 +81,7 @@ def translate_to_malay(text: str, retries: int = 2) -> str:
     for attempt in range(1, retries + 1):
         try:
             resp = _gemini_client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=prompt,
                 # disable "thinking" to match your docs example
                 config=types.GenerateContentConfig(
