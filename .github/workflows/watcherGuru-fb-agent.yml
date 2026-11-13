@@ -1,4 +1,4 @@
-name: Sentysis Auto Posting Content
+name: WatcherGuru FB Poster
 
 on:
   workflow_dispatch:
